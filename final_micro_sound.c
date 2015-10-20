@@ -6,7 +6,7 @@
 #include <msp430.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <stdlib.h>
+
 
 #define HT16K33_BLINK_CMD 0x80
 #define HT16K33_BLINK_DISPLAYON 0x01
@@ -43,73 +43,110 @@ int tracker = 1;
 
 int both_bars = 0;
 
+int i2c_b1_enable = 1;
+int spi_a1_enable = 1;
+int dac12_enable  = 1;
+int spi_a2_enable = 0;
+int timer_A0_enable = 1;
+int adc12_0_enable = 1;
+int timer_A1_enable = 0;
+
+int stop_i2c_b1 = 0;
+
+int push = 0;
+int bcnt = 0;
+int timcnt = 0;
+int buf2full = 0;
+
+uint8_t soundbuf[4][4096];
+
 int main(void)
 {
-  WDTCTL = WDTPW+WDTHOLD;                   // Stop watchdog timer
+
+	WDTCTL = WDTPW+WDTHOLD;                   // Stop watchdog timer
 
   /* I2C B Start */
-  UCB1CTL1 |= UCSWRST;                      // Enable SW reset
-  P8SEL |= BIT5+BIT6;                        // P3.0,1 option select (0 = SDA | 1 = SCL)
-  UCB1CTL0 = UCMST + UCMODE_3 + UCSYNC;     // I2C Master, synchronous mode
-  UCB1CTL1 = UCSSEL_2 + UCTR;            // Use SMCLK
-  UCB1BR0 = 12;                             // fSCL = SMCLK/12 = ~100kHz
-  UCB1BR1 = 0;
-  UCB1I2CSA = 0x70;                         // Slave Address is 70h
-  UCB1CTL1 &= ~UCSWRST;                     // Clear SW reset, resume operation
-  UCB1IE |= UCTXIE;
+  if(i2c_b1_enable == 1){
+	  UCB1CTL1 |= UCSWRST;                      // Enable SW reset
+	  P8SEL |= BIT5+BIT6;                        // P3.0,1 option select (0 = SDA | 1 = SCL)
+	  UCB1CTL0 = UCMST + UCMODE_3 + UCSYNC;     // I2C Master, synchronous mode
+	  UCB1CTL1 = UCSSEL_2 + UCTR;            // Use SMCLK
+	  UCB1BR0 = 12;                             // fSCL = SMCLK/12 = ~100kHz
+	  UCB1BR1 = 0;
+	  UCB1I2CSA = 0x70;                         // Slave Address is 70h
+	  UCB1CTL1 &= ~UCSWRST;                     // Clear SW reset, resume operation
+	  UCB1IE |= UCTXIE;
+  }
 
 
   /* SPI A1 Start */
-  P8SEL |= BIT1+BIT2+BIT3+BIT4;                  // P3.3,4 option select (2 = SS | 3 = SIMO | 4 = SOMI)
-  UCA1CTL1 |= UCSWRST;                      // **Put state machine in reset**
-  UCA1CTL0 |= UCCKPH+UCSYNC+UCMSB+UCMODE_2;
-  UCA1CTL1 &= ~UCSWRST;                     // **Initialize USCI state machine**
-  UCA1IE |= UCRXIE;                         // Enable USCI_A0 RX interrupt
-
+  if(spi_a1_enable == 1){
+	  P8SEL |= BIT1+BIT2+BIT3+BIT4;                  // P3.3,4 option select (2 = SS | 3 = SIMO | 4 = SOMI)
+	  UCA1CTL1 |= UCSWRST;                      // **Put state machine in reset**
+	  UCA1CTL0 |= UCCKPH+UCSYNC+UCMSB+UCMODE_2;
+	  UCA1CTL1 &= ~UCSWRST;                     // **Initialize USCI state machine**
+	  UCA1IE |= UCRXIE;                         // Enable USCI_A0 RX interrupt
+  }
 
   /* DAC12_A Start */
-  P6SEL |= BIT6+BIT7;
-  DAC12_0CTL0 = DAC12SREF_0+DAC12AMP_7+DAC12OG+DAC12ENC+DAC12CALON;
+  if(dac12_enable == 1){
+	  P6SEL |= BIT6+BIT7;
+	  DAC12_0CTL0 = DAC12SREF_0+DAC12AMP_7+DAC12OG+DAC12ENC+DAC12CALON;
+  }
+
+  /* SPI A2 Start */
+  if(spi_a2_enable == 1){
+	  P9SEL |= BIT1+BIT2+BIT3;
+	  UCA2CTL1 |= UCSWRST;                      // **Put state machine in reset**
+	  UCA2CTL0 |= UCCKPH+UCSYNC+UCMSB+UCMST;
+	  //UCA2CTL1 |= UCSSEL3;
+	  UCA2CTL1 &= ~UCSWRST;                     // **Initialize USCI state machine**
+	  UCA2IE |= UCRXIE;                         // Enable USCI_A0 RX interrupt
+  }
 
 
-  /* SPI A2 Start
-  P9SEL |= BIT1+BIT2+BIT3;
-  UCA2CTL1 |= UCSWRST;                      // **Put state machine in reset**
-  UCA2CTL0 |= UCCKPH+UCSYNC+UCMSB+UCMST;
-  UCA2CTL1 |= UCSSEL3;
-  UCA2CTL1 &= ~UCSWRST;                     // **Initialize USCI state machine**
-  UCA2IE |= UCRXIE;                         // Enable USCI_A0 RX interrupt
-  */
+  /* Timer A0 Start */
+  if(timer_A0_enable == 1){
+	  P1DIR |= 0x02;                            // P1.0 output
+	  TA0CCTL0 = CCIE;                          // CCR0 interrupt enabled
+	  TA0CCR0 = 1000;
+	  TA0CTL = TASSEL_2 + MC_1 + TACLR + ID_3;         // SMCLK, upmode, clear TAR
+	  TA0EX0 = TAIDEX_7;
+  }
 
 
-  /* Timer A  Start
-  TA0CCTL0 = CCIE;                          // CCR0 interrupt enabled
-  TA0CCR0 = 50000;
-  TA0CTL = TASSEL_2 + MC_1 + TACLR;         // SMCLK, upmode, clear TAR
-  */
+  /* Timer A0 Start */
+  if(timer_A1_enable == 1){
+	  P3DIR |= BIT0+BIT1;                            // P1.0 output
+	  TA0CCTL0 = CCIE;                          // CCR0 interrupt enabled
+	  TA0CCR0 = 62;
+	  TA0CTL = TASSEL_2 + MC_1 + TACLR;         // SMCLK, upmode, clear TAR
+  }
 
   /* ADC 0 Start */
-  ADC12CTL0 = ADC12SHT02 + ADC12ON;         // Sampling time, ADC12 on
-  ADC12CTL1 = ADC12SHP;                     // Use sampling timer
-  ADC12IE = 0x01;                           // Enable interrupt
-  ADC12CTL0 |= ADC12ENC;
-  P6SEL |= 0x01;                            // P6.0 ADC option select
-  P1DIR |= 0x01;                            // P1.0 output
+  if(adc12_0_enable == 1)
+  {
+	  ADC12CTL0 = ADC12SHT02 + ADC12ON + ADC12REFON;         // Sampling time, ADC12 on
+	  ADC12CTL1 = ADC12SHP;                     // Use sampling timer
+	  ADC12IE = 0x01;                           // Enable interrupt
+	  ADC12CTL0 |= ADC12ENC;
+	  P6SEL |= 0x01;                            // P6.0 ADC option select
+	  P1DIR |= 0x01;                            // P1.0 output
+  }
 
+  /* Lights */
+  P1DIR |= 0x02;
+  P3OUT &= ~BIT1;
+  P1OUT |= 0x02;
 
-  /* Lights
-  P1DIR |= BIT1;
-  P1DIR |= BIT2;
-
-  P1OUT &= ~BIT1;
-  P1OUT &= ~BIT2;
-  */
   //P4OUT &= ~BIT7;
 
 
   __bis_SR_register(GIE);
 
-  begin_I2C();
+  if(i2c_b1_enable == 1){
+	  begin_I2C();
+  }
 
   /*
   switch_bars(0x71);
@@ -120,9 +157,20 @@ int main(void)
 
   */
 
+  int delay1;
+  int delay2;
   while (1)
   {
-    ADC12CTL0 |= ADC12SC;                   // Start sampling/conversion
+	  if(adc12_0_enable == 1){
+		  /*
+		  for(delay1 = 0; delay1 < 1000; delay1++){
+			  for(delay2 = 0; delay2 < 1000; delay2++){
+
+			  }
+		  } */
+		  //ADC12CTL0 |= ADC12SC;                   // Start sampling/conversion
+	  }
+    //__bis_SR_register(GIE);     // LPM0, ADC12_ISR will force exit
     __bis_SR_register(LPM0_bits + GIE);     // LPM0, ADC12_ISR will force exit
     __no_operation();                       // For debugger
   }
@@ -174,6 +222,8 @@ void switch_bars(int address){
 }
 
 
+
+
 #if defined(__TI_COMPILER_VERSION__) || defined(__IAR_SYSTEMS_ICC__)
 #pragma vector=USCI_A1_VECTOR
 __interrupt void USCI_A1_ISR(void)
@@ -185,6 +235,7 @@ supported!
 #endif
 {
   while (!(UCRXIFG));             // USCI_A0 RX buffer ready?
+  //__bis_SR_register(GIE);
   //int r = UCA0RXBUF;
   //printf("Recieved information: %d\n\n", UCA0RXBUF);
   /*
@@ -201,22 +252,23 @@ supported!
   	  default: break;
   }*/
 
+  //int task = UCA1RXBUF / 16;
+  /*
+  if(bcnt == 0){
+	  buf[0] = UCA1RXBUF >> 4;
+	  bcnt = 1;
+  }
+  else if(bcnt == 1){
+	  buf[1] = UCA1RXBUF << 4;
+	  bcnt = 0;
+
+	  DAC12_0DAT = buf[1] ^ buf[0];
+  }*/
+
+  P3OUT |= 0x03;
   DAC12_0DAT = UCA1RXBUF;
 
-  /*
-  d++;
-  DAC12_0DAT = d;
-  if(d > 255){
-	  d = 0;
-  }
-  if(d % 2 == 0){
-	  DAC12_0CTL0 |= DAC12OPS;
-  }
-  else{
-	  DAC12_0CTL0 &= ~DAC12OPS;
-  }
-  */
-  UCA0IFG = 0;
+  UCA1IFG = 0;
 }
 
 
@@ -235,7 +287,8 @@ void __attribute__ ((interrupt(USCI_B1_VECTOR))) USCI_B1_ISR (void)
 #error Compiler not supported!
 #endif
 {
-	if(j == 0){
+	//__bis_SR_register(GIE);
+ 	if  (j == 0){
 		UCB1TXBUF = 0x21;
 		t = 0;
 		j++;
@@ -276,6 +329,11 @@ void __attribute__ ((interrupt(USCI_B1_VECTOR))) USCI_B1_ISR (void)
 	else if(j == 6){
 		UCB1TXBUF = i2c_bar_1_addr;
 			j++;
+
+			/* Atomicity Interupt Disables */
+			UCA1IE &= ~UCRXIE;
+			ADC12IE = 0x00;
+			TA0CCTL0 &= ~CCIE;
 	}
 	else if(j == 7){
 		UCB1TXBUF = i2c_bar_1_red;
@@ -291,14 +349,21 @@ void __attribute__ ((interrupt(USCI_B1_VECTOR))) USCI_B1_ISR (void)
 		j = 6;
 
 		UCB1CTL1 |= UCTXSTP;                  // I2C stop condition
+
+		/* Renable interrupts! */
+		UCA1IE |= UCRXIE;
+		ADC12IE = 0x01;
+		TA0CCTL0 = CCIE;
+
 		UCB1IFG &= ~UCTXIFG;                  // Clear USCI_B1 TX int flag
 		__bic_SR_register_on_exit(LPM0_bits);
 	}
 }
 
 
-/*
+
 // Timer0 A0 interrupt service routine
+
 #if defined(__TI_COMPILER_VERSION__) || defined(__IAR_SYSTEMS_ICC__)
 #pragma vector=TIMER0_A0_VECTOR
 __interrupt void TIMER0_A0_ISR(void)
@@ -308,178 +373,26 @@ void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) TIMER0_A0_ISR (void)
 #error Compiler not supported!
 #endif
 {
-	if(tracker <= 4){
-		i2c_bar_1_set(0, redtest, 0);
-		i2c_bar_1_set(2, 0, 0);
-		i2c_bar_1_set(4, 0, 0);
-		redtest = redtest * 2 + 1;
-	}
-	else if(tracker <= 8){
-		i2c_bar_1_set(2, redtest, 0);
-		i2c_bar_1_set(4, 0, 0);
-		redtest = redtest * 2 + 1;
-	}
-	else if(tracker <= 12){
-		i2c_bar_1_set(4, redtest, 0);
-		redtest = redtest * 2 + 1;
-	}
-	else if(tracker <= 16){
-		i2c_bar_1_set(0, redtest & 0xF0 | 0x0F, 0);
-		i2c_bar_1_set(2, 0, 0);
-		i2c_bar_1_set(4, 0, 0);
-		redtest = redtest * 2 + 1;
-	}
-	else if(tracker <= 20){
-		i2c_bar_1_set(2, redtest & 0xF0 | 0x0F, 0);
-		i2c_bar_1_set(4, 0, 0);
-		redtest = redtest * 2 + 1;
-	}
-	else if(tracker <= 24){
-		i2c_bar_1_set(4, redtest & 0xF0 | 0x0F, 0);
-		redtest = redtest * 2 + 1;
-	}
-
-	if(tracker == 4){ redtest = 1; }
-	if(tracker == 8){ redtest = 1; }
-	if(tracker == 12){ redtest = 0x10; }
-	if(tracker == 16){ redtest = 0x10; }
-	if(tracker == 20){ redtest = 0x10; }
-	if(tracker == 24){ redtest = 0x1; }
-
-	if(tracker != 25){
-	tracker++;
-	}
-
-	__bis_SR_register(GIE);
-
-	if (ADC12MEM0 >= 0xFF0){
-		i2c_bar_1_set(0, 0xFF, 0);
-		i2c_bar_1_set(2, 0xFF, 0);
-		i2c_bar_1_set(4, 0xFF, 0);
-	}
-	else if (ADC12MEM0 >= 0xF46) {
-		i2c_bar_1_set(0, 0xFF, 0);
-		i2c_bar_1_set(2, 0xFF, 0);
-		i2c_bar_1_set(4, 0x7F, 0);
-  	}
-	else if (ADC12MEM0 >= 0xE9C) {
-		i2c_bar_1_set(0, 0xFF, 0);
-		i2c_bar_1_set(2, 0xFF, 0);
-		i2c_bar_1_set(4, 0x3F, 0);
-  	}
-	else if (ADC12MEM0 >= 0xDF2) {
-		i2c_bar_1_set(0, 0xFF, 0);
-		i2c_bar_1_set(2, 0xFF, 0);
-		i2c_bar_1_set(4, 0x1F, 0);
-	}
-	else if (ADC12MEM0 >= 0xD48) {
-		i2c_bar_1_set(0, 0xFF, 0);
-		i2c_bar_1_set(2, 0xFF, 0);
-		i2c_bar_1_set(4, 0x0F, 0);
-	}
-	else if (ADC12MEM0 >= 0xC9E) {
-		i2c_bar_1_set(0, 0xFF, 0);
-		i2c_bar_1_set(2, 0x7F, 0);
-		i2c_bar_1_set(4, 0x0F, 0);
-	}
-	else if (ADC12MEM0 >= 0xBF4) {
-		i2c_bar_1_set(0, 0xFF, 0);
-		i2c_bar_1_set(2, 0x3F, 0);
-		i2c_bar_1_set(4, 0x0F, 0);
-	}
-	else if (ADC12MEM0 >= 0xB4A) {
-		i2c_bar_1_set(0, 0xFF, 0);
-		i2c_bar_1_set(2, 0x1F, 0);
-		i2c_bar_1_set(4, 0x0F, 0);
-	}
-	else if (ADC12MEM0 >= 0xAA0) {
-		i2c_bar_1_set(0, 0xFF, 0);
-		i2c_bar_1_set(2, 0x0F, 0);
-		i2c_bar_1_set(4, 0x0F, 0);
-	}
-	else if (ADC12MEM0 >= 0x9F6) {
-		i2c_bar_1_set(0, 0x7F, 0);
-		i2c_bar_1_set(2, 0x0F, 0);
-		i2c_bar_1_set(4, 0x0F, 0);
-	}
-	else if (ADC12MEM0 >= 0x94C) {
-		i2c_bar_1_set(0, 0x3F, 0);
-		i2c_bar_1_set(2, 0x0F, 0);
-		i2c_bar_1_set(4, 0x0F, 0);
-	}
-	else if (ADC12MEM0 >= 0x8A2) {
-		i2c_bar_1_set(0, 0x1F, 0);
-		i2c_bar_1_set(2, 0x0F, 0);
-		i2c_bar_1_set(4, 0x0F, 0);
-	}
-	else if (ADC12MEM0 >= 0x7F8) {
-		i2c_bar_1_set(0, 0x0F, 0);
-		i2c_bar_1_set(2, 0x0F, 0);
-		i2c_bar_1_set(4, 0x0F, 0);
-	}
-	else if (ADC12MEM0 >= 0x74E) {
-		i2c_bar_1_set(0, 0x0F, 0);
-		i2c_bar_1_set(2, 0x0F, 0);
-		i2c_bar_1_set(4, 0x07, 0);
-	}
-	else if (ADC12MEM0 >= 0x6A4) {
-		i2c_bar_1_set(0, 0x0F, 0);
-		i2c_bar_1_set(2, 0x0F, 0);
-		i2c_bar_1_set(4, 0x03, 0);
-	}
-	else if (ADC12MEM0 >= 0x5FA) {
-		i2c_bar_1_set(0, 0x0F, 0);
-		i2c_bar_1_set(2, 0x0F, 0);
-		i2c_bar_1_set(4, 0x01, 0);
-	}
-	else if (ADC12MEM0 >= 0x550) {
-		i2c_bar_1_set(0, 0x0F, 0);
-		i2c_bar_1_set(2, 0x0F, 0);
-		i2c_bar_1_set(4, 0x00, 0);
-	}
-	else if (ADC12MEM0 >= 0x4A6) {
-		i2c_bar_1_set(0, 0x0F, 0);
-		i2c_bar_1_set(2, 0x07, 0);
-		i2c_bar_1_set(4, 0x00, 0);
-	}
-	else if (ADC12MEM0 >= 0x3FC) {
-		i2c_bar_1_set(0, 0x0F, 0);
-		i2c_bar_1_set(2, 0x03, 0);
-		i2c_bar_1_set(4, 0x00, 0);
-	}
-	else if (ADC12MEM0 >= 0x352) {
-		i2c_bar_1_set(0, 0x0F, 0);
-		i2c_bar_1_set(2, 0x01, 0);
-		i2c_bar_1_set(4, 0x00, 0);
-	}
-	else if (ADC12MEM0 >= 0x2A8) {
-		i2c_bar_1_set(0, 0x0F, 0);
-		i2c_bar_1_set(2, 0x00, 0);
-		i2c_bar_1_set(4, 0x00, 0);
-	}
-	else if (ADC12MEM0 >= 0x1FE) {
-		i2c_bar_1_set(0, 0x07, 0);
-		i2c_bar_1_set(2, 0x00, 0);
-		i2c_bar_1_set(4, 0x00, 0);
-	}
-	else if (ADC12MEM0 >= 0x154) {
-		i2c_bar_1_set(0, 0x03, 0);
-		i2c_bar_1_set(2, 0x00, 0);
-		i2c_bar_1_set(4, 0x00, 0);
-	}
-	else if (ADC12MEM0 >= 0xAA) {
-		i2c_bar_1_set(0, 0x01, 0);
-		i2c_bar_1_set(2, 0x00, 0);
-		i2c_bar_1_set(4, 0x00, 0);
+	/*
+	if(bcnt > 4096){
+		DAC12_0DAT = buf1[timcnt++];
 	}
 	else{
-		i2c_bar_1_set(0, 0x00, 0);
-		i2c_bar_1_set(2, 0x00, 0);
-		i2c_bar_1_set(4, 0x00, 0);
+		if(buf2full == 1){
+			DAC12_0DAT = buf2[timcnt++];
+		}
 	}
+
+	if(timcnt == 4095){
+		timcnt = 0;
+	}
+
+	P3OUT ^= 0x03;
+	*/
+	ADC12CTL0 |= ADC12SC;
+	TA1CCTL0 &= ~CCIFG;
 	__bic_SR_register_on_exit(LPM0_bits);
 }
-*/
 
 
 #if defined(__TI_COMPILER_VERSION__) || defined(__IAR_SYSTEMS_ICC__)
@@ -497,6 +410,16 @@ void __attribute__ ((interrupt(ADC12_VECTOR))) ADC12_ISR (void)
   case  2: break;                           // Vector  2:  ADC overflow
   case  4: break;                           // Vector  4:  ADC timing overflow
   case  6:                                  // Vector  6:  ADC12IFG0
+	    //__bis_SR_register(GIE);
+	  	//UCB1IE |= UCTXIE;
+	  	 if(ADC12MEM0 <= 0x7FF){
+	  		 P1OUT &= 0x00;
+	  	 }
+	  	 else{
+	  		 P1OUT |= 0x02;
+	  	 }
+
+
 	  	/* Last 7 Bars, Red */
 		if (ADC12MEM0 >= 0xFF0){
 			i2c_bar_1_set(0, 0xF0, 0xFF);
@@ -624,7 +547,8 @@ void __attribute__ ((interrupt(ADC12_VECTOR))) ADC12_ISR (void)
 			i2c_bar_1_set(0, 0x00, 0);
 			i2c_bar_1_set(2, 0x00, 0);
 			i2c_bar_1_set(4, 0x00, 0);
-		}                     // P1.0 = 0
+		}
+
 
     __bic_SR_register_on_exit(LPM0_bits);   // Exit active CPU
   case  8: break;                           // Vector  8:  ADC12IFG1
