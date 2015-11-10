@@ -71,7 +71,8 @@ uint8_t dac12_enable    = 1;
 uint8_t timer_A1_enable = 1;
 
 /* DMA */
-uint8_t dma_enable		= 1;
+uint8_t dma_in_enable	= 1;
+uint8_t dma_out_enable	= 1;
 
 /* LCD */
 uint8_t lcd_enable      = 0;
@@ -143,7 +144,7 @@ int main(void)
   /* DAC12_A Start */
   if(dac12_enable == 1){
 	  P6SEL |= BIT6+BIT7;
-	  if (dma_enable == 0){
+	  if (dma_in_enable == 0){
 		  DAC12_0CTL0 = DAC12SREF_0 + DAC12AMP_7 + DAC12OG + DAC12ENC + DAC12CALON;
 	  }
 	  else{
@@ -260,7 +261,7 @@ int main(void)
 
 
   /* DMA0_DAC_12 */
-  if (dma_enable == 1){
+  if (dma_out_enable == 1){
 	  //Setup DMA triggers for DMA channel
 	  DMACTL0 = DMA0TSEL_0;    														// software trigger
 
@@ -270,6 +271,18 @@ int main(void)
 	  DMA0SZ = 12288;                        										// Block size pf Soundbuf
 	  DMA0CTL = DMADT_4|DMADSTINCR_0|DMASRCINCR_3|DMADSTBYTE|DMASRCBYTE; 			// Rpt single ch, inc src, byte-byte
 	  DMA0CTL |=  DMAEN;
+  }
+
+  if (dma_in_enable == 1){
+	  //Setup DMA triggers for DMA channel
+	  DMACTL1 = DMA0TSEL_1;    														// software trigger
+
+	  // Setup DMA1
+	  __data16_write_addr((unsigned short) &DMA1SA, (unsigned long) &UCA1RXBUF); 		// Source block address
+	  __data16_write_addr((unsigned short) &DMA1DA, (unsigned long) soundbuf);		// Destination address
+	  DMA1SZ = 12288;                        										// Block size pf Soundbuf
+	  DMA1CTL = DMADT_4|DMADSTINCR_3|DMASRCINCR_0|DMADSTBYTE; 			// Rpt single ch, inc src, byte-byte
+	  DMA1CTL |=  DMAEN;
   }
 
   /*
@@ -465,7 +478,13 @@ supported!
   while (!(UCRXIFG));             // USCI_A0 RX buffer ready?
 
   	TA2CTL &= ~MC_0;
-    soundbuf[cur_write_buf + byte_write_cnt++] = UCA1RXBUF;
+  	if (dma_out_enable == 1) {
+  		DMA1CTL |= DMAREQ;
+  		byte_write_cnt++;
+  	}
+  	else {
+  		soundbuf[cur_write_buf + byte_write_cnt++] = UCA1RXBUF;
+  	}
 
   if(byte_write_cnt == 4096){
 	  byte_write_cnt = 0;
@@ -737,7 +756,7 @@ void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) TIMER1_A0_ISR (void)
 	TA2CTL &= ~MC_0;
 
 	if(firstfour >= 3){
-		if (dma_enable == 0){
+		if (dma_in_enable == 0){
 		    DAC12_0DAT = soundbuf[cur_read_buf + byte_read_cnt++];
 		}
 		else {
